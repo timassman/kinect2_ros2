@@ -5,6 +5,8 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR})
+
 include_directories(include)
 
 # find dependencies
@@ -14,7 +16,7 @@ find_package(ament_index_cpp REQUIRED)
 find_package(rclcpp REQUIRED)
 # find_package(Threads REQUIRED)
 
-find_package(libfreenect REQUIRED)
+find_package(Freenect REQUIRED)
 find_package(OpenCV REQUIRED)
 
 find_package(sensor_msgs REQUIRED)
@@ -38,7 +40,7 @@ ament_target_dependencies(kinect_ros2_component
   image_transport
   OpenCV)
 target_link_libraries(kinect_ros2_component
-  freenect)
+  ${Freenect_LIBRARY})
 rclcpp_components_register_nodes(kinect_ros2_component "kinect_ros2::KinectRosComponent")
 
 add_executable(kinect_ros2_node

@@ -3,7 +3,7 @@
 
 extern "C"
 {
-  #include "libfreenect/libfreenect.h"
+  #include "libfreenect.h"
 }
 #include "rclcpp/rclcpp.hpp"
 #include "camera_info_manager/camera_info_manager.hpp"
@@ -20,6 +20,8 @@ public:
   KinectRosComponent(const rclcpp::NodeOptions & options);
   ~KinectRosComponent();
 
+  bool depthRegistered() const {return depth_registration_;}
+
 private:
   freenect_context * fn_ctx_;
   freenect_device * fn_dev_;
@@ -34,6 +36,8 @@ private:
   static void rgb_cb(freenect_device * dev, void * rgb_ptr, uint32_t timestamp);
 
   void timer_callback();
+
+  bool depth_registration_;
 };
 
 }
