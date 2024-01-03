@@ -9,8 +9,8 @@ from launch.substitutions.launch_configuration import LaunchConfiguration
 
 
 def generate_launch_description():
-    pkg_share = launch_ros.substitutions.FindPackageShare(package="kinect_ros2").find(
-        "kinect_ros2"
+    pkg_share = launch_ros.substitutions.FindPackageShare(package="kinect2_ros2").find(
+        "kinect2_ros2"
     )
     default_rviz_config_path = os.path.join(pkg_share, "rviz/pointcloud.rviz")
 
@@ -22,10 +22,10 @@ def generate_launch_description():
                 description="Absolute path to rviz config file",
             ),
             Node(
-                package="kinect_ros2",
-                executable="kinect_ros2_node",
-                name="kinect_ros2",
-                namespace="kinect",
+                package="kinect2_ros2",
+                executable="kinect2_ros2_node",
+                name="kinect2_ros2",
+                namespace="kinect2",
             ),
             Node(
                 package="rviz2",

@@ -1,9 +1,9 @@
-#include "kinect_ros2/kinect_ros2_component.hpp"
+#include "kinect2_ros2/kinect2_ros2_component.hpp"
 #include <ament_index_cpp/get_package_share_directory.hpp>
 
 using namespace std::chrono_literals;
 
-namespace kinect_ros2
+namespace kinect2_ros2
 {
 static cv::Mat _depth_image(cv::Mat::zeros(cv::Size(640, 480), CV_16UC1));
 static cv::Mat _rgb_image(cv::Mat::zeros(cv::Size(640, 480), CV_8UC3));
@@ -17,21 +17,21 @@ static rclcpp::Time _rgb_stamp;
 static bool _depth_flag;
 static bool _rgb_flag;
 
-KinectRosComponent::KinectRosComponent(const rclcpp::NodeOptions & options)
-: Node("kinect_ros2", options),
+Kinect2RosComponent::Kinect2RosComponent(const rclcpp::NodeOptions & options)
+: Node("kinect2_ros2", options),
   depth_registration_(false)
 {
-  timer_ = create_wall_timer(1ms, std::bind(&KinectRosComponent::timer_callback, this));
+  timer_ = create_wall_timer(1ms, std::bind(&Kinect2RosComponent::timer_callback, this));
   
-  std::string pkg_share = ament_index_cpp::get_package_share_directory("kinect_ros2");
+  std::string pkg_share = ament_index_cpp::get_package_share_directory("kinect2_ros2");
 
   //todo: use parameters
   depth_info_manager_ = std::make_shared<camera_info_manager::CameraInfoManager>(
-    this, "kinect",
+    this, "kinect2",
     "file://" + pkg_share + "/cfg/calibration_depth.yaml");
 
   rgb_info_manager_ = std::make_shared<camera_info_manager::CameraInfoManager>(
-    this, "kinect",
+    this, "kinect2",
     "file://" + pkg_share + "/cfg/calibration_rgb.yaml");
 
   depth_registration_ = this->declare_parameter("depth_registration", depth_registration_);
@@ -49,67 +49,32 @@ KinectRosComponent::KinectRosComponent(const rclcpp::NodeOptions & options)
   depth_pub_ = image_transport::create_camera_publisher(this, depth_registration_?"depth_registered/image_raw":"depth/image_raw");
   rgb_pub_ = image_transport::create_camera_publisher(this, "rgb/image_raw");
 
-  int ret = freenect_init(&fn_ctx_, NULL);
-  if (ret < 0) {
-    RCLCPP_ERROR(get_logger(), "ERROR INIT");
-    rclcpp::shutdown();
-  }
-
-  freenect_set_log_level(fn_ctx_, FREENECT_LOG_FATAL);
-  freenect_select_subdevices(fn_ctx_, FREENECT_DEVICE_CAMERA);
-
-  int num_devices = ret = freenect_num_devices(fn_ctx_);
-  if (ret < 0) {
-    RCLCPP_ERROR(get_logger(), "FREENECT - ERROR GET DEVICES");
-    rclcpp::shutdown();
-  }
+  int num_devices = fn_ctx_.enumerateDevices();
   if (num_devices == 0) {
-    RCLCPP_ERROR(get_logger(), "FREENECT - NO DEVICES");
-    freenect_shutdown(fn_ctx_);
+    RCLCPP_ERROR(get_logger(), "FREENECT2 - NO DEVICES");
     rclcpp::shutdown();
   }
-  ret = freenect_open_device(fn_ctx_, &fn_dev_, 0);
-  if (ret < 0) {
-    freenect_shutdown(fn_ctx_);
-    RCLCPP_ERROR(get_logger(), "FREENECT - ERROR OPEN");
-    rclcpp::shutdown();
-  }
-  ret =
-    freenect_set_depth_mode(
-    fn_dev_, freenect_find_depth_mode(
-      FREENECT_RESOLUTION_MEDIUM,
-      depth_registration_?FREENECT_DEPTH_REGISTERED:FREENECT_DEPTH_MM));
-  if (ret < 0) {
-    freenect_shutdown(fn_ctx_);
-    RCLCPP_ERROR(get_logger(), "FREENECT - ERROR SET DEPTH");
+  fn_dev_ = fn_ctx_.openDevice(0); // default open first device
+  if (fn_dev_ == nullptr) {
+    RCLCPP_ERROR(get_logger(), "FREENECT2 - ERROR OPEN");
     rclcpp::shutdown();
   }
 
-  freenect_set_depth_callback(fn_dev_, depth_cb);
-  freenect_set_video_callback(fn_dev_, rgb_cb);
+  fn_dev_->setColorFrameListener(&color_frame_listener_);
+  fn_dev_->setIrAndDepthFrameListener(&depth_frame_listener_);
 
-  ret = freenect_start_depth(fn_dev_);
-  if (ret < 0) {
-    freenect_shutdown(fn_ctx_);
-    RCLCPP_ERROR(get_logger(), "FREENECT - ERROR START DEPTH");
-    rclcpp::shutdown();
-  }
-
-  ret = freenect_start_video(fn_dev_);
-  if (ret < 0) {
-    freenect_shutdown(fn_ctx_);
-    RCLCPP_ERROR(get_logger(), "FREENECT - ERROR START RGB");
+  bool success = fn_dev_->start();
+  if (success == false) {
+    RCLCPP_ERROR(get_logger(), "FREENECT2 - ERROR START STREAMS");
     rclcpp::shutdown();
   }
 }
 
-KinectRosComponent::~KinectRosComponent()
+Kinect2RosComponent::~Kinect2RosComponent()
 {
-  RCLCPP_INFO(get_logger(), "stoping kinect");
-  freenect_stop_depth(fn_dev_);
-  freenect_stop_video(fn_dev_);
-  freenect_close_device(fn_dev_);
-  freenect_shutdown(fn_ctx_);
+  RCLCPP_INFO(get_logger(), "stopping kinect");
+  fn_dev_->stop();
+  fn_dev_->close();
 }
 
 
@@ -117,39 +82,46 @@ KinectRosComponent::~KinectRosComponent()
 create a cv::Mat is passing the pointer of that region, avoiding the need of copying the data
 to a new cv::Mat. This way, the callback only used to set a flag that indicates that a new image
 has arrived. The flag is unset when a msg is published */
-void KinectRosComponent::depth_cb(freenect_device * dev, void * depth_ptr, uint32_t timestamp)
+bool Kinect2RosComponent::IrAndDepthFrameListener::onNewFrame(libfreenect2::Frame::Type type, libfreenect2::Frame *frame)
 {
-  if (_depth_flag) {
-    return;
+  if (_depth_flag || type != libfreenect2::Frame::Type::Depth) { // ignore IR
+    return false;
   }
 
-  if (_freenect_depth_pointer != (uint16_t *)depth_ptr) {
-    _depth_image = cv::Mat(480, 640, CV_16UC1, depth_ptr);
-    _freenect_depth_pointer = (uint16_t *)depth_ptr;
+  if (_freenect_depth_pointer != (uint16_t *)frame->data) {
+    _depth_image = cv::Mat(frame->height, frame->width, CV_16UC1, frame->data);
+    _freenect_depth_pointer = (uint16_t *)frame->data;
   }
 
   _depth_stamp =  rclcpp::Clock{RCL_SYSTEM_TIME}.now();
   _depth_flag = true;
+
+  // take ownership of the frame, otherwise the pointer won't be valid anymore
+  // don't forget to delete it
+  return true;
 }
 
-void KinectRosComponent::rgb_cb(freenect_device * dev, void * rgb_ptr, uint32_t timestamp)
+bool Kinect2RosComponent::ColorFrameListener::onNewFrame(libfreenect2::Frame::Type type, libfreenect2::Frame *frame)
 {
-  if (_rgb_flag) {
-    return;
+  if (_rgb_flag || type != libfreenect2::Frame::Type::Color) {
+    return false;
   }
 
-  if (_freenect_rgb_pointer != (uint8_t *)rgb_ptr) {
-    _rgb_image = cv::Mat(480, 640, CV_8UC3, rgb_ptr);
-    _freenect_rgb_pointer = (uint8_t *)rgb_ptr;
+  if (_freenect_rgb_pointer != (uint8_t *)frame->data) {
+    _rgb_image = cv::Mat(frame->height, frame->width, CV_8UC3, frame->data);
+    _freenect_rgb_pointer = (uint8_t *)frame->data;
   }
 
    _rgb_stamp = rclcpp::Clock{RCL_SYSTEM_TIME}.now();
   _rgb_flag = true;
+
+  // take ownership of the frame, otherwise the pointer won't be valid anymore
+  // don't forget to delete it
+  return true;
 }
 
-void KinectRosComponent::timer_callback()
+void Kinect2RosComponent::timer_callback()
 {
-  freenect_process_events(fn_ctx_);
 
   if (_depth_flag) {
     //convert 16bit to 8bit mono
@@ -178,4 +150,4 @@ void KinectRosComponent::timer_callback()
 }
 
 #include "rclcpp_components/register_node_macro.hpp"
-RCLCPP_COMPONENTS_REGISTER_NODE(kinect_ros2::KinectRosComponent)
+RCLCPP_COMPONENTS_REGISTER_NODE(kinect2_ros2::Kinect2RosComponent)

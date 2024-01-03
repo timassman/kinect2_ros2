@@ -1,15 +1,15 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>kinect_ros2</name>
+  <name>kinect2_ros2</name>
   <version>0.0.1</version>
-  <description>Kinect v1 driver for ROS2</description>
-  <maintainer email="fernandodelio@gmail.com">Fernando de Lio</maintainer>
+  <description>Kinect v2 driver for ROS2</description>
+  <maintainer email="timassman@users.noreply.github.com">Tim Assman</maintainer>
   <license>BSD</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
-  <depend>libfreenect</depend>
+  <depend>libfreenect2</depend>
   <depend>rclcpp</depend>
   <depend>sensor_msgs</depend>
   <depend>cv_bridge</depend>
