@@ -5,11 +5,11 @@ using namespace std::chrono_literals;
 
 namespace kinect2_ros2
 {
-static cv::Mat _depth_image(cv::Mat::zeros(cv::Size(640, 480), CV_16UC1));
-static cv::Mat _rgb_image(cv::Mat::zeros(cv::Size(640, 480), CV_8UC3));
+static cv::Mat _depth_image(cv::Mat::zeros(cv::Size(512, 424), CV_16UC1));
+static cv::Mat _rgb_image(cv::Mat::zeros(cv::Size(1920, 1080), CV_8UC3));
 
-static uint16_t * _freenect_depth_pointer = nullptr;
-static uint8_t * _freenect_rgb_pointer = nullptr;
+static libfreenect2::Frame * _freenect_depth_pointer = nullptr;
+static libfreenect2::Frame * _freenect_rgb_pointer = nullptr;
 
 static rclcpp::Time _depth_stamp;
 static rclcpp::Time _rgb_stamp;
@@ -19,6 +19,8 @@ static bool _rgb_flag;
 
 Kinect2RosComponent::Kinect2RosComponent(const rclcpp::NodeOptions & options)
 : Node("kinect2_ros2", options),
+  color_frame_listener_(get_logger()),
+  depth_frame_listener_(get_logger()),
   depth_registration_(false)
 {
   timer_ = create_wall_timer(1ms, std::bind(&Kinect2RosComponent::timer_callback, this));
@@ -37,13 +39,13 @@ Kinect2RosComponent::Kinect2RosComponent(const rclcpp::NodeOptions & options)
   depth_registration_ = this->declare_parameter("depth_registration", depth_registration_);
 
   rgb_info_ = rgb_info_manager_->getCameraInfo();
-  rgb_info_.header.frame_id = "kinect_rgb";
+  rgb_info_.header.frame_id = "kinect2_rgb";
   depth_info_ = depth_info_manager_->getCameraInfo();
   if(depth_registration_) {
     depth_info_.header.frame_id = rgb_info_.header.frame_id;
   }
   else {
-    depth_info_.header.frame_id = "kinect_depth";
+    depth_info_.header.frame_id = "kinect2_depth";
   }
 
   depth_pub_ = image_transport::create_camera_publisher(this, depth_registration_?"depth_registered/image_raw":"depth/image_raw");
@@ -72,7 +74,7 @@ Kinect2RosComponent::Kinect2RosComponent(const rclcpp::NodeOptions & options)
 
 Kinect2RosComponent::~Kinect2RosComponent()
 {
-  RCLCPP_INFO(get_logger(), "stopping kinect");
+  RCLCPP_INFO(get_logger(), "stopping kinect2");
   fn_dev_->stop();
   fn_dev_->close();
 }
@@ -88,9 +90,15 @@ bool Kinect2RosComponent::IrAndDepthFrameListener::onNewFrame(libfreenect2::Fram
     return false;
   }
 
-  if (_freenect_depth_pointer != (uint16_t *)frame->data) {
-    _depth_image = cv::Mat(frame->height, frame->width, CV_16UC1, frame->data);
-    _freenect_depth_pointer = (uint16_t *)frame->data;
+  // RCLCPP_INFO(_logger, "Depth width %lu height %lu", frame->width, frame->height);
+  // RCLCPP_INFO(_logger, "Depth format %d", frame->format);
+
+  if (_freenect_depth_pointer != frame) {
+    // Format: Float = 2, A 4-byte float per pixel, -> CV_32FC1
+    cv::Mat depth_32FC1(frame->height, frame->width, CV_32FC1, frame->data);
+    depth_32FC1.convertTo(_depth_image, CV_16UC1); //convert 32bit to 16bit
+    cv::flip(_depth_image, _depth_image, 1);
+    _freenect_depth_pointer = frame;
   }
 
   _depth_stamp =  rclcpp::Clock{RCL_SYSTEM_TIME}.now();
@@ -107,9 +115,14 @@ bool Kinect2RosComponent::ColorFrameListener::onNewFrame(libfreenect2::Frame::Ty
     return false;
   }
 
-  if (_freenect_rgb_pointer != (uint8_t *)frame->data) {
-    _rgb_image = cv::Mat(frame->height, frame->width, CV_8UC3, frame->data);
-    _freenect_rgb_pointer = (uint8_t *)frame->data;
+  // RCLCPP_INFO(_logger, "Color width %lu height %lu", frame->width, frame->height);
+  // RCLCPP_INFO(_logger, "Color format %d", frame->format);
+
+  if (_freenect_rgb_pointer != frame) {
+    // Format: BGRX = 4, 4 bytes of B, G, R, and unused per pixel -> CV_8UC4
+    cv::Mat bgra_image(frame->height, frame->width, CV_8UC4, frame->data);
+    cvtColor(bgra_image, _rgb_image, CV_BGRA2RGB); // convert to rgb
+    _freenect_rgb_pointer = frame;
   }
 
    _rgb_stamp = rclcpp::Clock{RCL_SYSTEM_TIME}.now();
@@ -123,24 +136,30 @@ bool Kinect2RosComponent::ColorFrameListener::onNewFrame(libfreenect2::Frame::Ty
 void Kinect2RosComponent::timer_callback()
 {
 
-  if (_depth_flag) {
-    //convert 16bit to 8bit mono
-    // cv::Mat depth_8UC1(_depth_image, CV_16UC1);
-    // depth_8UC1.convertTo(depth_8UC1, CV_8UC1);
-
+  if (_depth_flag && _freenect_depth_pointer) {
     depth_info_.header.stamp = _depth_stamp;
     auto msg = cv_bridge::CvImage(depth_info_.header, "16UC1", _depth_image).toImageMsg();
     depth_pub_.publish(*msg, depth_info_);
+    if (_freenect_depth_pointer)
+    {
+      delete _freenect_depth_pointer;
+      _freenect_depth_pointer = nullptr;
+    }
 
     // cv::imshow("Depth", _depth_image);
     // cv::waitKey(1);
     _depth_flag = false;
   }
 
-  if (_rgb_flag) {
+  if (_rgb_flag && _freenect_rgb_pointer) {
     rgb_info_.header.stamp = _rgb_stamp;
     auto msg = cv_bridge::CvImage(rgb_info_.header, "rgb8", _rgb_image).toImageMsg();
     rgb_pub_.publish(*msg, rgb_info_);
+    if (_freenect_rgb_pointer)
+    {
+      delete _freenect_rgb_pointer;
+      _freenect_rgb_pointer = nullptr;
+    }
 
     // cv::imshow("RGB", _rgb_image);
     // cv::waitKey(1);

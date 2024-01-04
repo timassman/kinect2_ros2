@@ -22,6 +22,12 @@ public:
 private:
   class ColorFrameListener : public libfreenect2::FrameListener
   {
+    public:
+      ColorFrameListener(rclcpp::Logger logger)
+      : _logger(logger)
+      {}
+    private:
+      rclcpp::Logger _logger;
   /**
    * libfreenect2 calls this function when a new frame is decoded.
    * @param type Type of the new frame.
@@ -33,6 +39,12 @@ private:
 
   class IrAndDepthFrameListener : public libfreenect2::FrameListener
   {
+    public:
+      IrAndDepthFrameListener(rclcpp::Logger logger)
+      : _logger(logger)
+      {}
+    private:
+      rclcpp::Logger _logger;
   /**
    * libfreenect2 calls this function when a new frame is decoded.
    * @param type Type of the new frame.

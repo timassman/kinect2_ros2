@@ -1,5 +1,5 @@
-image_width: 640
-image_height: 480
+image_width: 512
+image_height: 424
 camera_name: kinect2
 camera_matrix:
    rows: 3
